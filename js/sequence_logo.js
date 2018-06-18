@@ -1,19 +1,170 @@
 /**
  * File: sequence_logo.js
- * Author: Sam Lichtenberg (splichte@gmail.com)
+ *
+ * Sequence parsing and d3 rendering: Sam Lichtenberg (splichte@gmail.com)
+ * MEME parsing and d3 rendering: Alex Reynolds 
  *
  * This file implements sequence logo generation for 
- * bounded sequences in d3.
+ * bounded sequences and MEME motif table information in d3.
  *
  * See `https://en.wikipedia.org/wiki/Sequence_logo` 
  * for more information.
  *
- * Usage (see `index.html` for example):
- *  (1) define sequence number and length bounds
- *  (2) define sequence data
- *  (3) call entry_point with (1) and (2).
  */
 
+var SequenceLogo = SequenceLogo || {};
+
+SequenceLogo.MEME = class MEME {
+  constructor(
+      version = -1,
+      alphabet = null,
+      strands = null,
+      background_frequencies = null,
+      identifier = null,
+      alternate_name = null,
+      url = null,
+      letter_probability_matrix = null,
+      stack_heights = null,
+      letter_heights = null) 
+  {
+    this.version = version;
+    this.alphabet = alphabet;
+    this.strands = strands;
+    this.background_frequencies = background_frequencies;
+    this.identifier = identifier;
+    this.alternate_name = alternate_name;
+    this.url = url;
+    this.letter_probability_matrix = letter_probability_matrix;
+    this.stack_heights = stack_heights;
+    this.letter_heights = letter_heights;
+  }
+  
+  /* 
+    Height and information content:
+        
+    cf. http://meme-suite.org/doc/ceqlogo.html
+    cf. https://www.sciencedirect.com/science/article/pii/0022283686901658
+    
+    The height of a letter is calculated as:
+    
+      height(b,l) = f(b,l) * R(l)
+      
+    where f(b,l) is the frequency of residue b 
+    at position l. 
+    
+    The stack height R(l) is the amount of 
+    information present at position l and can 
+    be quantified as follows:
+  
+      R(l) for nucleic acids = log2(4) - (H(l) + e(n))
+  
+    where log is taken base 2, H(l) is the uncertainty 
+    at position l, and e(n) is the error correction 
+    factor for small sample sizes n.
+    
+      H(l) = -(Sum f(b,l) * log2[f(b,l)])
+      
+    where again, log is taken base 2. f(b,l) is the 
+    frequency of base b at position l. The sum is 
+    taken over all amino acids or bases.
+    
+    The error correction factor e(n) is approximated by:
+  
+      e(n) = (s-1) / (2 * ln 2 * n)
+  
+    where s, the number of symbols, is 4 for
+    nucleic acids (i.e., DNA).  
+  */
+
+  stack_height(position) {
+    var alphabet_length = this.alphabet.length;
+    var max_entropy = Math.log2(alphabet_length);
+    var frequencies = this.letter_probability_matrix.frequencies[position];
+    // make sure to intialize reducer, otherwise incorrect uncertainty will result
+    var uncertainty = frequencies.reduce(function(t, d) {
+      // cf. https://stats.stackexchange.com/questions/57069/alternative-to-shannons-entropy-when-probability-equal-to-zero
+      return t + (d == 0 ? 0 : -d * Math.log2(d));
+    }, 0.0);
+    var nsites = this.letter_probability_matrix.attributes.nsites;
+    var error_correction_factor = ( alphabet_length - 1 ) / (( 2 * nsites ) * Math.log2(2) );
+    return max_entropy - (uncertainty + error_correction_factor);
+  };
+   
+  update_stack_heights() {
+    var self = this;
+    var stack_heights = new Array(this.letter_probability_matrix.frequencies.length);
+    this.letter_probability_matrix.frequencies.map(function(d, i) {
+      stack_heights[i] = self.stack_height(i);
+    });
+    this.stack_heights = stack_heights;
+  };
+  
+  update_letter_heights() {
+    var self = this;
+    var letter_heights = new Array(this.letter_probability_matrix.frequencies.length);
+    this.letter_probability_matrix.frequencies.map(function(frequencies, position) {
+      letter_heights[position] = frequencies.map(function(frequency, idx) {
+        return frequency * self.stack_heights[position];
+      }); 
+    });
+    this.letter_heights = letter_heights;
+  }
+  
+  update_state() {
+    this.update_stack_heights();
+    this.update_letter_heights();
+  }
+}
+  
+/*
+  To derive logo information from counts:
+  
+  cf. https://github.com/WebLogo/weblogo/blob/master/weblogolib/__init__.py#L1097
+*/
+
+SequenceLogo.Logo = class Logo {
+  static get MAPPING() {
+    return {
+      'A' : 0,
+      'C' : 1,
+      'G' : 2,
+      'T' : 3
+    };
+  }
+  static get COLOR_SCHEMES() { 
+    return {
+      'classic' : {
+        'A' : 'green',
+        'C' : 'blue',
+        'T' : 'red',
+        'U' : 'red',
+        'G' : 'orange'
+      },
+      'nucleotide' : {
+        'A' : 'green',
+        'C' : 'blue',
+        'T' : 'red',
+        'U' : 'red',
+        'G' : 'orange'
+      },
+      'base_pairing' : {
+        'A' : 'darkorange',
+        'C' : 'blue',
+        'T' : 'darkorange',
+        'U' : 'darkorange',
+        'G' : 'blue'
+      }
+    }; 
+  }
+  static get PATHS() {
+    return {
+      'A' : 'M 11.21875 -16.1875 L 12.296875 0 L 15.734375 0 L 10.09375 -80.265625 L 6.375 -80.265625 L 0.578125 0 L 4.015625 0 L 5.109375 -16.1875 Z M 10.296875 -29.953125 L 6.046875 -29.953125 L 8.171875 -61.328125 Z M 10.296875 -29.953125',
+      'C' : 'M 16.171875 -50.734375 C 16.046875 -57.375 15.734375 -61.578125 15 -65.890625 C 13.671875 -73.6875 11.546875 -78 8.953125 -78 C 4.078125 -78 1.046875 -62.53125 1.046875 -37.6875 C 1.046875 -13.046875 4.046875 2.421875 8.859375 2.421875 C 13.15625 2.421875 16.015625 -8.625 16.234375 -26.21875 L 12.78125 -26.21875 C 12.5625 -16.421875 11.171875 -10.84375 8.953125 -10.84375 C 6.203125 -10.84375 4.59375 -20.734375 4.59375 -37.46875 C 4.59375 -54.421875 6.28125 -64.53125 9.078125 -64.53125 C 10.3125 -64.53125 11.328125 -62.640625 12 -58.953125 C 12.375 -56.84375 12.5625 -54.84375 12.78125 -50.734375 Z M 16.171875 -50.734375',
+      'T' : 'M 10.015625 -66.734375 L 15.5625 -66.734375 L 15.5625 -80.546875 L 0.359375 -80.546875 L 0.359375 -66.734375 L 6.125 -66.734375 L 6.125 0 L 10.015625 0 Z M 10.015625 -66.734375',
+      'G' : 'M 16.1875 -41.375 L 9.53125 -41.375 L 9.53125 -28.1875 L 13.3125 -28.1875 C 13.234375 -23.859375 13 -21.21875 12.5 -18.46875 C 11.671875 -13.828125 10.421875 -11.078125 9.109375 -11.078125 C 6.359375 -11.078125 4.375 -22.265625 4.375 -38.109375 C 4.375 -54.671875 6.125 -64.703125 9.015625 -64.703125 C 10.203125 -64.703125 11.203125 -63.109375 11.953125 -60.0625 C 12.4375 -58.15625 12.6875 -56.359375 12.96875 -52.34375 L 16.1875 -52.34375 C 15.78125 -68.1875 13 -78.203125 9 -78.203125 C 4.21875 -78.203125 0.953125 -61.84375 0.953125 -37.890625 C 0.953125 -14.5625 4.234375 2.421875 8.71875 2.421875 C 10.953125 2.421875 12.453125 -1.265625 13.734375 -9.921875 L 14.140625 0.21875 L 16.1875 0.21875 Z M 16.1875 -41.375'
+    };
+  }
+}
 
 /**
  * For each index, get the transform needed so that things line up
@@ -31,8 +182,8 @@ function getLetterBaseTransform(i) {
 
   if (i === 3) { // letter T
     baseTransform[0] += 1;
-    baseTransform[1] += 2.0;
-  } else if (i === 1) { // letter A
+    baseTransform[1] += 2.9;
+  } else if (i === 0) { // letter A
     baseTransform[0] += 1;
     baseTransform[1] += 2.5;
   }
@@ -49,32 +200,29 @@ function getLetterBaseTransform(i) {
  *
  * A single sequence is specified and plotted as a probability
  * measure, in order to get a full-height or full-information
- * residue glyph. This is copied and pasted into this function.
+ * residue glyph. This glyph's path is copied and pasted into this 
+ * function.
  *
  * Some editing of the getLetterBaseTransform() function is 
  * required to tweak the residue positions, which do not line
- * up exactly.
+ * up precisely.
+ *
+ * In the future, we might extend the alphabet to support epilogos
+ * and protein residues. For now, we focus on a basic set of 
+ * nucleotides.
  * 
  * @param {number} i - letter index. Range: [0,4)
  * @returns {string} SVG path corresponding to i. 
  */
 function getLetterPath(i) {
-  const letterA = 'M 11.21875 -16.1875 L 12.296875 0 L 15.734375 0 L 10.09375 -80.265625 L 6.375 -80.265625 L 0.578125 0 L 4.015625 0 L 5.109375 -16.1875 Z M 10.296875 -29.953125 L 6.046875 -29.953125 L 8.171875 -61.328125 Z M 10.296875 -29.953125';
-
-  const letterG = 'M 16.1875 -41.375 L 9.53125 -41.375 L 9.53125 -28.1875 L 13.3125 -28.1875 C 13.234375 -23.859375 13 -21.21875 12.5 -18.46875 C 11.671875 -13.828125 10.421875 -11.078125 9.109375 -11.078125 C 6.359375 -11.078125 4.375 -22.265625 4.375 -38.109375 C 4.375 -54.671875 6.125 -64.703125 9.015625 -64.703125 C 10.203125 -64.703125 11.203125 -63.109375 11.953125 -60.0625 C 12.4375 -58.15625 12.6875 -56.359375 12.96875 -52.34375 L 16.1875 -52.34375 C 15.78125 -68.1875 13 -78.203125 9 -78.203125 C 4.21875 -78.203125 0.953125 -61.84375 0.953125 -37.890625 C 0.953125 -14.5625 4.234375 2.421875 8.71875 2.421875 C 10.953125 2.421875 12.453125 -1.265625 13.734375 -9.921875 L 14.140625 0.21875 L 16.1875 0.21875 Z M 16.1875 -41.375';
-
-  const letterT = 'M 10.015625 -66.734375 L 15.5625 -66.734375 L 15.5625 -80.546875 L 0.359375 -80.546875 L 0.359375 -66.734375 L 6.125 -66.734375 L 6.125 0 L 10.015625 0 Z M 10.015625 -66.734375';
-
-  const letterC = 'M 16.171875 -50.734375 C 16.046875 -57.375 15.734375 -61.578125 15 -65.890625 C 13.671875 -73.6875 11.546875 -78 8.953125 -78 C 4.078125 -78 1.046875 -62.53125 1.046875 -37.6875 C 1.046875 -13.046875 4.046875 2.421875 8.859375 2.421875 C 13.15625 2.421875 16.015625 -8.625 16.234375 -26.21875 L 12.78125 -26.21875 C 12.5625 -16.421875 11.171875 -10.84375 8.953125 -10.84375 C 6.203125 -10.84375 4.59375 -20.734375 4.59375 -37.46875 C 4.59375 -54.421875 6.28125 -64.53125 9.078125 -64.53125 C 10.3125 -64.53125 11.328125 -62.640625 12 -58.953125 C 12.375 -56.84375 12.5625 -54.84375 12.78125 -50.734375 Z M 16.171875 -50.734375';
-
   if (i === 0) {
-    return letterG;
+    return SequenceLogo.Logo.PATHS['A'];
   } else if (i === 1) {
-    return letterA;
+    return SequenceLogo.Logo.PATHS['C'];
   } else if (i === 2) {
-    return letterC;
+    return SequenceLogo.Logo.PATHS['G'];
   } else if (i === 3) {
-    return letterT;
+    return SequenceLogo.Logo.PATHS['T'];
   }
   return null;
 }
@@ -85,9 +233,9 @@ function getLetterPath(i) {
  * @returns {number[]} counts of each letter. 
  */
 function getLetterCnts(s, i) {
-  const dict = { G: 0,
-    A: 0,
+  const dict = { A: 0,
     C: 0,
+    G: 0,
     T: 0 };
 
   s.forEach((d) => {
@@ -223,11 +371,11 @@ function isValidData(data, seqLenBounds, seqNumBounds) {
 
 function intToLetter(i) {
   if (i === 0) {
-    return 'G';
-  } else if (i === 1) {
     return 'A';
-  } else if (i === 2) {
+  } else if (i === 1) {
     return 'C';
+  } else if (i === 2) {
+    return 'G';
   } else if (i === 3) {
     return 'T';
   }
@@ -247,6 +395,10 @@ function getRandomInt(min, max) {
   return Math.floor(Math.random() * ((max - min) + 1)) + min;
 }
 
+function randomMemeMotif(memeMotifArray) {
+  var randomMemeIndex = getRandomInt(0, memeMotifArray.length - 1);
+  return memeMotifArray[randomMemeIndex];
+}
 
 /**
  * Generate random sequences by sampling from DiscreteUniform(0,4). 
@@ -280,13 +432,13 @@ function getRandomData(seqLenBounds, seqNumBounds) {
 }
 
 /**
- * Entry point for all functionality.
+ * Entry point for all functionality by sequence list.
  *
  * @param {string[]} sequenceData
  * @param {number[]} seqLenBounds
  * @param {number[]} seqNumBounds
  */
-function entryPoint(sequenceData, seqLenBounds, seqNumBounds) {
+function entryPointBySequenceList(sequenceData, seqLenBounds, seqNumBounds) {
   const isValid = isValidData(sequenceData, seqLenBounds, seqNumBounds);
 
   if (!isValid) {
@@ -301,6 +453,10 @@ function entryPoint(sequenceData, seqLenBounds, seqNumBounds) {
 
   // range of letter bounds at each nucleotide index position
   const yz = d3.range(m).map(i => offsets(sequenceData, i));
+  
+  console.log("n", n);
+  console.log("m", m);
+  console.log("yz", yz);
 
   /**
    * Next, we set local values that govern visual appearance.
@@ -323,8 +479,6 @@ function entryPoint(sequenceData, seqLenBounds, seqNumBounds) {
 
   // height of just the base letters
   const svgLetterHeight = 150;
-
-  const colors = d3.scaleOrdinal(d3.schemeCategory10);
 
   // map: sequence length -> innerSVG
   const xscale = d3.scaleLinear().domain([0, m])
@@ -411,7 +565,7 @@ function entryPoint(sequenceData, seqLenBounds, seqNumBounds) {
     .filter(d => (d[1] - d[0] > 0))
     .append('path')
     .attr('d', d => getLetterPath(d[2]))
-    .style('fill', d => colors(d[2]))
+    .style('fill', function(d) { return SequenceLogo.Logo.COLOR_SCHEMES['nucleotide'][intToLetter(d[2])]; })
     .attr('transform', function (d) { return calcPathTransform(this, d, yscale, colWidth); });
 }
 
@@ -421,7 +575,7 @@ function entryPoint(sequenceData, seqLenBounds, seqNumBounds) {
  * @param {number[]} seqLenBounds
  * @param {number[]} seqNumBounds
  */
-function refreshSVG(seqLenBounds, seqNumBounds) {
+function refreshRandomSVG(seqLenBounds, seqNumBounds) {
   const sequenceData = getRandomData(seqLenBounds, seqNumBounds);
 
   // clear SVG if it exists
@@ -431,6 +585,322 @@ function refreshSVG(seqLenBounds, seqNumBounds) {
     svg.remove();
   }
 
-  entryPoint(sequenceData, seqLenBounds, seqNumBounds);
+  entryPointBySequenceList(sequenceData, seqLenBounds, seqNumBounds);
 }
 
+/**
+ * Parse MEME motif string into structured object
+ *
+ * cf. http://meme-suite.org/doc/meme-format.html
+ *
+ * @param {string} memeMotif
+ */
+ 
+function parseMEMEMotif(memeMotif) {
+  let result = {};
+  let lines = memeMotif.split(/[\r|\n]/);
+  let memeMotifObj = new SequenceLogo.MEME();
+  let linesLength = lines.length;
+  for (var idx = 0; idx < linesLength; ++idx) {
+    var line = lines[idx];
+    if (line.length == 0) {
+      continue;
+    }
+    else {
+      if (versionRegex = line.match(/^MEME version ([0-9.]{1,})$/) || null) {
+        memeMotifObj.version = parseFloat(versionRegex[1]);
+      }
+      else if (alphabetRegex = line.match(/^ALPHABET= ([ACGTN]{1,})$/) || null) {
+        memeMotifObj.alphabet = alphabetRegex[1].split('');
+      }
+      else if (strandsRegex = line.match(/^strands: ([\+\s\-]+)$/) || null) {
+        memeMotifObj.strands = strandsRegex[1].split(' ');
+      }
+      else if (backgroundFrequenciesRegex = line.match(/^Background letter frequencies/) || null) {
+        idx++;
+        line = lines[idx];
+        var freqPairingsObj = {};
+        if (line.length == 0) {
+          // assume uniform frequencies
+          var freqPairingsLength = memeMotifObj.alphabet.length;
+          for (var fpi = 0; fpi < freqPairingsLength; ++fpi) {
+            freqPairingsObj[memeMotifObj.alphabet[fpi]] = 1/freqPairingsLength;
+          }
+        }
+        else {
+          var freqPairings = line.split(' ');
+          var freqPairingsLength = freqPairings.length;
+          for (var fpi = 0; fpi < freqPairingsLength; ++fpi) {
+            if (fpi % 2 == 0) {
+              var letter = freqPairings[fpi];
+            }
+            else {
+              var frequency = parseFloat(freqPairings[fpi]);
+              freqPairingsObj[letter] = frequency;
+            }
+          }  
+        }        
+        memeMotifObj.background_frequencies = freqPairingsObj;
+      }
+      else if (motifNameRegex = line.match(/^MOTIF ([A-Za-z0-9\-\s_.,!"'/$]+)$/) || null) {
+        var motifNames = motifNameRegex[1].split(" ");
+        memeMotifObj.identifier = motifNames[0];
+        if (motifNames.length == 2) {
+          memeMotifObj.alternate_name = motifNames[1];
+        }
+      }
+      else if (urlRegex = line.match(/https?:\/\/\S+/gi) || null) {
+        memeMotifObj.url = urlRegex[0];
+      }
+      else if (letterProbabilityRegex = line.match(/^letter-probability matrix: ([A-Za-z\=\s0-9].*)$/) || null) {
+        // parse any match, if found
+        if (letterProbabilityRegex[1].length > 0) {
+          var lprPairings = letterProbabilityRegex[1].split(" ");
+          var lprPairingsLength = lprPairings.length;
+          var lprPairingsObj = {};
+          for (var lpri = 0; lpri < lprPairingsLength; ++lpri) {
+            if ((lpri % 2) == 0) {
+              var keyStr = lprPairings[lpri];
+              var key = keyStr.substring(0, keyStr.length - 1);
+            }
+            else {
+              var value =  lprPairings[lpri];
+              lprPairingsObj[key] = parseFloat(value);
+            }
+          }
+          // defaults
+          if (!lprPairingsObj.nsites) {
+            lprPairingsObj.nsites = 20;
+            lprPairingsObj.E = 0;
+          }
+          memeMotifObj.letter_probability_matrix = {};
+          memeMotifObj.letter_probability_matrix['attributes'] = lprPairingsObj;
+        }
+        // in any case, parse lines until a blank line is found, and then continue out of loop
+        idx++;
+        line = lines[idx];
+        var lineLength = line.length;
+        memeMotifObj.letter_probability_matrix['frequencies'] = [];
+        while (lineLength != 0) {
+          var lprFrequencies = line.trim().split(/\s+/);
+          var lprFrequenciesLength = lprFrequencies.length;
+          var alphabetLength = memeMotifObj.alphabet.length || memeMotifObj.letter_probability_matrix.attributes.alength;
+          var lprFrequenciesArray = [];
+          for (var ai = 0; ai < alphabetLength; ++ai) {
+            lprFrequenciesArray.push(parseFloat(lprFrequencies[ai]));
+          }
+          memeMotifObj.letter_probability_matrix.frequencies.push(lprFrequenciesArray);
+          idx++;
+          line = lines[idx];
+          if (!line) {
+            break;
+          }
+          lineLength = line.length;
+        }
+      }
+    }
+  }
+  
+  // update state
+  memeMotifObj.update_state();
+  
+  // debug
+  console.log("memeMotifObj", memeMotifObj);
+  
+  return memeMotifObj;
+}
+
+function refreshMEMEMotifSVG(memeMotifArray) {
+  const memeObj = parseMEMEMotif(randomMemeMotif(memeMotifArray));
+  
+  // clear SVG if it exists
+  const svg = d3.select('svg');
+
+  if (svg) {
+    svg.remove();
+  }
+  
+  entryPointByMEMEMotif(memeObj);
+}
+
+function meme_offsets(position, symbols, letter_heights, stack_height, max_entropy) {
+  const offs = [];
+  let ctr = 0;
+  letter_heights.forEach((d, j) => {
+    const nextCtr = ctr + d;
+    offs.push([ctr, nextCtr,  (nextCtr - ctr), j]);
+    ctr = nextCtr;
+  });
+  // sort by heights of produced rects
+  offs.sort((a, b) => (b[2] - a[2]));
+  const outOffsets = [];
+  ctr = max_entropy - stack_height;
+  offs.forEach((d) => {
+    const diff = d[2];
+    outOffsets.push([ctr, ctr + diff, d[3]]);
+    ctr += diff;
+  });
+  return outOffsets;
+}
+
+/**
+ * Entry point for all functionality by MEME motif object.
+ *
+ * @param {MEME} memeObj
+ */
+function entryPointByMEMEMotif(meme) {
+  // number of symbols
+  const n = meme.alphabet.length;
+  
+  // number of nucleotides over sequence
+  const m = meme.letter_heights.length; 
+  
+  // range of letter bounds at each nucleotide index position
+  const max_entropy = Math.log2(n);
+  const yz = d3.range(m).map(i => meme_offsets(i, n, meme.letter_heights[i], meme.stack_heights[i], max_entropy));
+  
+  // margin
+  var margin = {top: 20, right: 0, bottom: 10, left: 25};
+  
+  // width including endpoint markers
+  const svgFullWidth = 550;
+
+  // width of just the base letters + x-axis labels
+  const svgLetterWidth = 460;
+
+  const endpointWidth = (svgFullWidth - svgLetterWidth) / 2;
+
+  // height including x-axis labels and endpoint markers
+  const svgFullHeight = 250;
+
+  // height of just the base letters
+  const svgLetterHeight = 160;
+
+  // map: sequence length -> innerSVG
+  const xscale = d3.scaleLinear()
+    .domain([0, m])
+    .range([endpointWidth, svgLetterWidth + endpointWidth]);
+  
+  // get one unit of width from d3 scale (convenience)
+  const colWidth = (xscale(1) - xscale(0));
+  
+  // map: log2 number of symbols -> svg letter height (i.e., information in bits)
+  const yScale = d3.scaleLinear()
+    .domain([0, max_entropy])
+    .range([0, svgLetterHeight]);
+    
+  const yAxisScale = d3.scaleLinear()
+    .domain([0, max_entropy])
+    .range([svgLetterHeight, 0]);
+    
+  const svg = d3.select('#main')
+    .append('svg')
+    .attr("width", svgFullWidth + margin.left + margin.right)
+    .attr("height", svgFullHeight + margin.top + margin.bottom)
+    .append("g")
+    .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+    
+  // Attach title
+  const titleGroup = svg.append('g')
+    .attr('class', 'title');
+    
+  const titleFontSize = 18;
+  const titleFontWeight = 'bold';
+
+  titleGroup.append('text')
+    .text(meme.identifier)
+    .style('text-anchor', 'middle')
+    .style('font-size', titleFontSize)
+    .style('font-weight', titleFontWeight)
+    .attr('transform', `translate(${(svgFullWidth-margin.left-margin.right)/2.0},${0})`);
+
+  // Attach y-axis (bits)
+  const yAxisGroup = svg.append('g')
+    .attr('class', 'y axis');
+  
+  const yAxisFontSize = 18;
+    
+  yAxisGroup.append('text')
+    .text('bits')
+    .style('text-anchor', 'left')
+    .style('font-size', yAxisFontSize)
+    .attr('transform', `translate(0,${(svgLetterHeight+margin.top+margin.bottom)/2.0}) rotate(270)`);
+    
+  yAxisGroup.append('g')
+    .attr("transform", "translate(30,0)")
+		.call(d3.axisLeft(yAxisScale).ticks(2));
+
+  const endptFontSize = 18;
+  const endptFontWeight = 'bold';
+  const endptTY = (svgFullHeight + svgLetterHeight) / 2 - 10;
+
+  // Attach left endpoint to SVG
+  svg.append('text')
+    .text('5\'')
+    .style('text-anchor', 'begin')
+    .style('font-size', endptFontSize)
+    .style('font-weight', endptFontWeight)
+    .attr('transform', `translate(${15},${endptTY})`);
+
+  // Attach right endpoint to SVG
+  svg.append('text')
+    .text('3\'')
+    .style('text-anchor', 'end')
+    .style('font-size', endptFontSize)
+    .style('font-weight', endptFontWeight)
+    .attr('transform', `translate(${svgFullWidth-15},${endptTY})`);
+    
+  /**
+   * Our groups are organized by columns--
+   * each column gets an SVG group.
+   * 
+   * The column is used to neatly handle all x-offsets and labels.
+   */
+  const group = svg.selectAll('group')
+    .data(yz)
+    .enter()
+    .append('g')
+    .attr('class', 'column')
+    .attr('transform', (d, i) => `translate(${xscale(i)},0)`);
+    
+  /**
+   * Attach the number labels to the x-axis.
+   * 
+   * A possible modification is to make xLabelFontSize 
+   * data-dependent. As written its position will change 
+   * with the column width (# of nucleotides), so 
+   * visually it will look fine, but it may be 
+   * desirable to alter font size as well.
+   */
+  const xLabelFontSize = 18;
+  const xLabelTX = (colWidth / 2) + (xLabelFontSize / 3);
+  const xLabelTY = svgLetterHeight + 10;
+
+  group.append('text')
+    .text((d, i) => `${i + 1}`)
+    .style('font-size', xLabelFontSize)
+    .style('text-anchor', 'end')
+    .attr('transform', `translate(${xLabelTX}, ${xLabelTY}) rotate(270)`);
+    
+  /*
+   * For each column (group):
+   *  Add the letter (represented as an SVG path, see above)
+   *  if the calculated height is nonzero (the filter condition).
+   *
+   * In other words, if that base appeared at this position
+   * in at least one sequence.
+   *
+   * notes:
+   *  Filter is used here to avoid attaching paths with 0 size
+   *  to the DOM. This filtering could optionally be performed 
+   *  earlier, when we build yz.
+   */
+  group.selectAll('path')
+    .data(d => d)
+    .enter()
+    .filter(d => (d[1] - d[0] > 0))
+    .append('path')
+    .attr('d', d => getLetterPath(d[2]))
+    .style('fill', function(d) { return SequenceLogo.Logo.COLOR_SCHEMES['nucleotide'][intToLetter(d[2])]; })
+    .attr('transform', function (d) { return calcPathTransform(this, d, yScale, colWidth); });
+}
