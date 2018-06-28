@@ -6,9 +6,30 @@
   <script src="js/sequence_logo.js"></script>
 </head>
 <body>
+  <div id="color-container" class="center">
+    Color scheme: 
+    <select id="color">
+      <option value="base_pairing">Base pairing</option>      
+      <option value="charge">Charge</option>
+      <option value="chemistry">Chemistry</option>
+      <option value="classic">Classic</option>
+      <option value="epilogos-15state-human">Epilogos (15-state, human)</option>
+      <option value="hydrophobicity">Hydrophobicity</option>
+      <option value="nucleotide">Nucleotide</option>
+      <option value="taylor">Taylor</option>
+    </select>
+  </div>
+  <div id="type-container" class="center">
+    Type:
+    <select id="type">
+      <option value="nucleotide">Nucleotide</option>
+      <option value="protein">Protein</option>
+      <option value="epilogos">Epilogos</option>
+    </select>
+  </div>
   <div id="button" class="center">
-    <button id="fasta">Generate logo from FASTA</button> 
-    <button id="mememotif">Generate logo from MEME motif</button>
+    <button id="fasta">Generate logo from random FASTA selection</button> 
+    <button id="mememotif">Generate logo from random MEME motif selection</button>
   </div>
   <div id="main" class="center">
   </div>
@@ -109,37 +130,13 @@ agtgagtgaatattctct
 `
 },
 {
-  'identifier' : '15 hns Binding Sites',
-  'sequences' : `>hns1
-tAGGCTGATTT
->hns2
-gAAAATTATTT
->hns3
-gGGAGTTATTC
->hns4
-aCAAATTATTT
->hns5
-gCAACAGAGTA
->hns6
-aCGCCTGAATA
->hns7
-tCGAGAAAGTT
->hns8
-tCGCCGGAATT
->hns9
-tGGCATGAATA
->hns10
-aTAAAGGAATC
->hns11
-cTAATTTAATT
->hns12
-gCAATTAAATT
->hns13
-tGACATGAATC
->hns14
-cTGGCTAATTT
->hns15
-aCAACTGAATT
+  'identifier' : '3 ad-hoc RNA sequences',
+  'sequences' : `>001
+CUUAUAUCCUUACC
+>002
+CUCGCGUGUCAAUC
+>003
+CTCCCGUUGCAAUC
 `
 }];
     
@@ -235,12 +232,49 @@ letter-probability matrix: alength= 4 w= 18 nsites= 43 E= 0
   0.029412        0.205882        0.441176        0.323529
   0.100000        0.100000        0.600000        0.200000
   0.076923        0.000000        0.846154        0.076923
+`,
+`MEME version 4.12
+
+ALPHABET= ABCDEFGHIJKLMNO
+
+Background letter frequencies (from /home/toolsproxy/hpc-proxy/scripts/binaries/epilogos-meme/assets/backgrounds/observed/freqs_E001.txt):
+A 0.010 B 0.003 C 0.000 D 0.014 E 0.145 F 0.001 G 0.038 H 0.003 I 0.027 J 0.004 K 0.001 L 0.002 M 0.010 N 0.039 O 0.704
+
+MOTIF OAAAAA MEME-1
+
+letter-probability matrix: alength= 15 w= 6 nsites= 6 E= 3.7e-025 
+ 0.166667  0.166667  0.000000  0.000000  0.166667  0.000000  0.166667  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.333333 
+ 0.333333  0.166667  0.000000  0.000000  0.166667  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.333333 
+ 0.500000  0.166667  0.000000  0.000000  0.166667  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.166667 
+ 0.833333  0.000000  0.000000  0.000000  0.166667  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000 
+ 1.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000 
+ 1.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000  0.000000
 `];
 
-  const memeObj = parseMEMEMotif(randomElement(memeMotifSampleData))
-  renderObject(memeObj);
+  // logo object intialization
+  var seqLogo = new SequenceLogo.Logo();
 
-  document.getElementById('fasta').onclick = refreshSVG.bind(null, fastaSampleData, 'FASTA');
-  document.getElementById('mememotif').onclick = refreshSVG.bind(null, memeMotifSampleData, 'MEME');
+  // color scheme and mode
+  document.getElementById('color').options[3].selected = true; // classic
+  seqLogo.color_scheme = document.getElementById('color').options[document.getElementById('color').options.selectedIndex].value;
+  seqLogo.mode = 'fasta';
+  seqLogo.type = 'nucleotide';
 
+  // event handlers
+  document.getElementById('color').onchange = function(d) {
+    seqLogo.color_scheme = d.target.value;
+    seqLogo.refresh_SVG(seqLogo.item, seqLogo.mode, seqLogo.type);
+    this.blur();
+  };
+  document.getElementById('type').onchange = function(d) {
+    seqLogo.type = d.target.value;
+    seqLogo.refresh_SVG(seqLogo.item, seqLogo.mode, seqLogo.type);
+    this.blur();
+  }
+  document.getElementById('fasta').onclick = seqLogo.refresh_SVG.bind(seqLogo, fastaSampleData, 'fasta', 'nucleotide');
+  document.getElementById('mememotif').onclick = seqLogo.refresh_SVG.bind(seqLogo, memeMotifSampleData, 'mememotif', 'nucleotide');
+  
+  // initialize sequence logo
+  document.getElementById(seqLogo.mode).click();
+  
 </script>
